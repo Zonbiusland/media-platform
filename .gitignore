@@ -1,0 +1,49 @@
+# Entornos virtuales y caché de Python
+.venv/
+venv/
+ENV/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*$py.class
+
+# Compilaciones y empaquetados (PyInstaller / Nuitka / wheels)
+dist/
+build/
+*.spec
+*.egg-info/
+*.whl
+
+# Binarios externos (FFmpeg / FFprobe / librerías nativas)
+ffmpeg
+ffprobe
+ffmpeg.exe
+ffprobe.exe
+*.dll
+*.so
+*.dylib
+
+# Datos personales, historial SQLite, cookies y configuración local
+*cookies*.txt
+cookies.txt
+
+
+# Carpeta de descargas y archivos multimedia
+Descargas/
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.mp3
+*.flac
+*.m4a
+*.opus
+*.wav
+*.ogg
+*.part
+*.ytdl
+
+# Datos locales y respaldos internos
+backup_monolito/
+portable_data/*
+!portable_data/settings.example.json

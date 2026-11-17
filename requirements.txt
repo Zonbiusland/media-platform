@@ -1,0 +1,7 @@
+# Dependencias principales (100% Software Libre compatible con GPLv3+)
+PySide6>=6.8.0
+yt-dlp>=2025.1.15
+certifi>=2024.2.2
+
+# Opcional: transcripción local por voz cuando un vídeo no dispone de subtítulos
+# faster-whisper>=1.0.0

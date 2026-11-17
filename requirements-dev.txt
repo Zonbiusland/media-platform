@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Dependencias de desarrollo, pruebas automatizadas y empaquetado (Media Platform v1.0.0)
+-r requirements.txt
+pytest>=8.0.0
+pyinstaller>=6.0.0

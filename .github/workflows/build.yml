@@ -1,0 +1,252 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI Tests & Release Build (Windows & Linux)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  test:
+    name: Ejecutar Suite de Tests (pytest)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependencias de sistema para PySide6 Headless y FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libdbus-1-3
+
+      - name: Instalar dependencias de Python y pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ejecutar suite de pruebas automatizadas con pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          pytest -v
+
+  build-windows:
+    name: Compilar Portable Windows x64 (PyInstaller + FFmpeg)
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12 (x64)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+          cache: "pip"
+
+      - name: Instalar dependencias y PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Descargar binarios oficiales libres de FFmpeg y FFprobe para Windows x64
+        shell: pwsh
+        run: |
+          $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_extracted" -Force
+          $binDir = Get-ChildItem -Path "ffmpeg_extracted" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path "portable_data/bin" | Out-Null
+          Copy-Item $binDir.FullName -Destination "ffmpeg.exe" -Force
+          Copy-Item (Join-Path $binDir.DirectoryName "ffprobe.exe") -Destination "ffprobe.exe" -Force
+          Copy-Item $binDir.FullName -Destination "portable_data/bin/ffmpeg.exe" -Force
+          Copy-Item (Join-Path $binDir.DirectoryName "ffprobe.exe") -Destination "portable_data/bin/ffprobe.exe" -Force
+
+      - name: Compilar ejecutable portable con PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --noconsole --onedir `
+            --name "MediaPlatform" `
+            --icon "icono.ico" `
+            --hidden-import PySide6.QtSvg `
+            --collect-data certifi `
+            --add-data "icono.ico;." `
+            --add-data "locales;locales" `
+            --add-data "mpp;mpp" `
+            --add-data "mpp/assets;mpp/assets" `
+            --add-binary "ffmpeg.exe;." `
+            --add-binary "ffprobe.exe;." `
+            descargador_definitivo.pyw
+
+          New-Item -ItemType Directory -Force -Path "dist/MediaPlatform/portable_data/bin" | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist/MediaPlatform/locales" | Out-Null
+          Copy-Item "locales/*.json" -Destination "dist/MediaPlatform/locales/" -Force
+          Copy-Item "ffmpeg.exe" -Destination "dist/MediaPlatform/portable_data/bin/ffmpeg.exe" -Force
+          Copy-Item "ffprobe.exe" -Destination "dist/MediaPlatform/portable_data/bin/ffprobe.exe" -Force
+          Copy-Item "portable_data/settings.example.json" -Destination "dist/MediaPlatform/portable_data/settings.example.json" -Force
+          Copy-Item "icono.ico" -Destination "dist/MediaPlatform/icono.ico" -Force
+          Copy-Item "LICENSE" -Destination "dist/MediaPlatform/LICENSE" -Force
+          Copy-Item "THIRD_PARTY_NOTICES.md" -Destination "dist/MediaPlatform/THIRD_PARTY_NOTICES.md" -Force
+          Copy-Item "README.md" -Destination "dist/MediaPlatform/README.md" -Force
+
+      - name: Empaquetar MediaPlatform-Windows-x64.zip y calcular SHA-256
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/MediaPlatform/*" -DestinationPath "MediaPlatform-Windows-x64.zip" -Force
+          $zipHash = (Get-FileHash "MediaPlatform-Windows-x64.zip" -Algorithm SHA256).Hash.ToLower()
+          $exeHash = (Get-FileHash "dist/MediaPlatform/MediaPlatform.exe" -Algorithm SHA256).Hash.ToLower()
+          @(
+            "$zipHash  MediaPlatform-Windows-x64.zip"
+            "$exeHash  MediaPlatform-Windows-x64/MediaPlatform.exe"
+          ) | Set-Content -Path "windows-sha256.txt" -Encoding UTF8
+
+      - name: Generar atestación criptográfica de procedencia (Windows x64)
+        if: github.event.repository.private == false
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/MediaPlatform/MediaPlatform.exe
+            MediaPlatform-Windows-x64.zip
+
+      - name: Subir artefacto Windows x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaPlatform-Windows-x64
+          path: |
+            MediaPlatform-Windows-x64.zip
+            windows-sha256.txt
+
+  build-linux:
+    name: Compilar Portable Linux x64 (PyInstaller + FFmpeg)
+    needs: test
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12 (x64)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependencias de sistema para PySide6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl xz-utils libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libdbus-1-3
+
+      - name: Instalar dependencias y PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Descargar FFmpeg y FFprobe estáticos oficiales (Linux x64)
+        run: |
+          mkdir -p ffmpeg_static
+          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" -o ffmpeg-linux64.tar.xz
+          tar -xJf ffmpeg-linux64.tar.xz -C ffmpeg_static --strip-components=1
+          test -x ffmpeg_static/bin/ffmpeg && test -x ffmpeg_static/bin/ffprobe
+
+      - name: Compilar paquete portable con PyInstaller
+        run: |
+          pyinstaller --noconfirm --clean --noconsole --onedir \
+            --name "MediaPlatform" \
+            --hidden-import PySide6.QtSvg \
+            --collect-data certifi \
+            --add-data "icono.ico:." \
+            --add-data "locales:locales" \
+            --add-data "mpp:mpp" \
+            --add-data "mpp/assets:mpp/assets" \
+            descargador_definitivo.pyw
+
+          mkdir -p dist/MediaPlatform/portable_data/bin
+          mkdir -p dist/MediaPlatform/locales
+          cp locales/*.json dist/MediaPlatform/locales/
+          cp ffmpeg_static/bin/ffmpeg dist/MediaPlatform/portable_data/bin/ffmpeg
+          cp ffmpeg_static/bin/ffprobe dist/MediaPlatform/portable_data/bin/ffprobe
+          chmod +x dist/MediaPlatform/portable_data/bin/ffmpeg dist/MediaPlatform/portable_data/bin/ffprobe
+          cp portable_data/settings.example.json dist/MediaPlatform/portable_data/settings.example.json
+          cp icono.ico dist/MediaPlatform/icono.ico
+          cp LICENSE dist/MediaPlatform/LICENSE
+          cp THIRD_PARTY_NOTICES.md dist/MediaPlatform/THIRD_PARTY_NOTICES.md
+          cp README.md dist/MediaPlatform/README.md
+
+      - name: Empaquetar MediaPlatform-Linux-x64.tar.gz y calcular SHA-256
+        run: |
+          tar -czvf MediaPlatform-Linux-x64.tar.gz -C dist MediaPlatform
+          ZIP_HASH=$(sha256sum MediaPlatform-Linux-x64.tar.gz | awk '{print $1}')
+          BIN_HASH=$(sha256sum dist/MediaPlatform/MediaPlatform | awk '{print $1}')
+          printf "%s  MediaPlatform-Linux-x64.tar.gz\n%s  MediaPlatform-Linux-x64/MediaPlatform\n" "$ZIP_HASH" "$BIN_HASH" > linux-sha256.txt
+
+      - name: Generar atestación criptográfica de procedencia (Linux x64)
+        if: github.event.repository.private == false
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/MediaPlatform/MediaPlatform
+            MediaPlatform-Linux-x64.tar.gz
+
+      - name: Subir artefacto Linux x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaPlatform-Linux-x64
+          path: |
+            MediaPlatform-Linux-x64.tar.gz
+            linux-sha256.txt
+
+  release:
+    name: Publicar Paquetes en GitHub Release
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Descargar artefacto Windows x64
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaPlatform-Windows-x64
+
+      - name: Descargar artefacto Linux x64
+        uses: actions/download-artifact@v4
+        with:
+          name: MediaPlatform-Linux-x64
+
+      - name: Consolidar SHA256SUMS.txt de todos los artefactos
+        run: |
+          cat windows-sha256.txt linux-sha256.txt | tr -d '\r' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          grep -E '\.(zip|tar\.gz)$' SHA256SUMS.txt | sha256sum -c -
+
+      - name: Adjuntar paquetes portables y SHA256SUMS.txt a la GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            MediaPlatform-Windows-x64.zip
+            MediaPlatform-Linux-x64.tar.gz
+            SHA256SUMS.txt
